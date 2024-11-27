@@ -5,7 +5,6 @@ import time
 from itertools import product
 from pathlib import Path
 import traceback
-from turtle import color
 
 from inputimeout import inputimeout, TimeoutOccurred
 from selenium.common.exceptions import NoSuchElementException
@@ -23,7 +22,7 @@ from src.regex_utils import generate_regex_patterns_for_blacklisting
 import re
 
 import src.utils.browser_utils as browser_utils
-import src.utils.time_utils as utils
+import src.utils.time_utils
 
 
 class EnvironmentKeys:

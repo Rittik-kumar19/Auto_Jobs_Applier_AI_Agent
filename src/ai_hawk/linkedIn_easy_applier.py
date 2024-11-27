@@ -180,23 +180,31 @@ class AIHawkEasyApplier:
             raise Exception(f"Failed to apply to job! Original exception:\nTraceback:\n{tb_str}")
 
     def _find_easy_apply_button(self, job_context: JobContext) -> WebElement:
-        logger.debug("Searching for 'Easy Apply' button")
+        logger.debug("Searching for 'Easy Apply' or 'Continue' button")
         attempt = 0
 
         search_methods = [
             {
-                'description': "find all 'Easy Apply' buttons using find_elements",
-                'find_elements': True,
-                'xpath': '//button[contains(@class, "jobs-apply-button") and contains(., "Easy Apply")]'
+                "description": "find all 'Easy Apply' buttons using find_elements",
+                "find_elements": True,
+                "xpath": '//button[contains(@class, "jobs-apply-button") and contains(., "Easy Apply")]',
             },
             {
-                'description': "'aria-label' containing 'Easy Apply to'",
-                'xpath': '//button[contains(@aria-label, "Easy Apply to")]'
+                "description": "'aria-label' containing 'Easy Apply to'",
+                "xpath": '//button[contains(@aria-label, "Easy Apply to")]',
             },
             {
-                'description': "button text search",
-                'xpath': '//button[contains(text(), "Easy Apply") or contains(text(), "Apply now")]'
-            }
+                "description": "button text search",
+                "xpath": '//button[contains(text(), "Easy Apply") or contains(text(), "Apply now")]',
+            },
+            {
+                "description": "find 'Continue' button using text",
+                "xpath": '//button[.//span[text()="Continue"]]',
+            },
+            {
+                "description": "find 'Continue' button using aria-label",
+                "xpath": '//button[contains(@aria-label, "Continue applying")]',
+            },
         ]
 
         while attempt < 2:
@@ -375,21 +383,41 @@ class AIHawkEasyApplier:
 
         try:
             easy_apply_content = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CLASS_NAME, 'jobs-easy-apply-content'))
+                EC.presence_of_element_located(
+                    (By.XPATH, "//div[contains(@class, 'artdeco-modal__content')]")
+                )
             )
 
-            pb4_elements = easy_apply_content.find_elements(By.CLASS_NAME, 'ph5')
-            for element in pb4_elements:
-                self._process_form_element(element, job_context)
-        except Exception as e:
-            logger.error(f"Failed to find form elements: {e}")
+            input_elements = easy_apply_content.find_elements(
+                By.XPATH,
+                ".//div[contains(@class, 'fb-dash-form-element')]"
+            )
+            logger.debug(f"Found {len(input_elements)} form elements")
+
+            for index, element in enumerate(input_elements, start=1):
+                try:
+                    logger.debug(f"Processing form element {index}/{len(input_elements)}: {element}")
+                    self._process_form_element(element, job_context)
+                except Exception as element_error:
+                    logger.error(f"Error processing form element {index}: {element_error}")
+                    logger.debug(traceback.format_exc())
+
+        except TimeoutException as timeout_error:
+            logger.error("Timeout while waiting for the easy apply modal content to load.")
+            logger.debug(traceback.format_exc())
+        except NoSuchElementException as no_element_error:
+            logger.error("Unable to locate the specified elements.")
+            logger.debug(traceback.format_exc())
+        except Exception as generic_error:
+            logger.error(f"Unexpected error occurred: {generic_error}")
+            logger.debug(traceback.format_exc())
 
     def _process_form_element(self, element: WebElement, job_context: JobContext) -> None:
         logger.debug("Processing form element")
         if self._is_upload_field(element):
             self._handle_upload_fields(element, job_context)
         else:
-            self._fill_additional_questions(job_context)
+            self._fill_additional_questions(element, job_context)
 
     def _handle_dropdown_fields(self, element: WebElement) -> None:
         logger.debug("Handling dropdown fields")
@@ -500,18 +528,14 @@ class AIHawkEasyApplier:
         while True:
             try:
                 timestamp = int(time.time())
-                file_path_pdf = os.path.join(folder_path, f"CV.pdf")
-                file_path_pdf_timestamp = os.path.join(folder_path, f"CV_{timestamp}.pdf")
-                logger.debug(f"Generated file path for resume: {file_path_pdf_timestamp}")
+                file_path_pdf = os.path.join(folder_path, f"CV_{timestamp}.pdf")
+                logger.debug(f"Generated file path for resume: {file_path_pdf}")
 
                 logger.debug(f"Generating resume for job: {job.title} at {job.company}")
                 resume_pdf_base64 = self.resume_generator_manager.pdf_base64(job_description_text=job.description)
-                with open(file_path_pdf, "wb") as f:
+                with open(file_path_pdf, "xb") as f:
                     f.write(base64.b64decode(resume_pdf_base64))
-
-                with open(file_path_pdf_timestamp, "xb") as f:
-                    f.write(base64.b64decode(resume_pdf_base64))
-                logger.debug(f"Resume successfully generated and saved to: {file_path_pdf_timestamp}")
+                logger.debug(f"Resume successfully generated and saved to: {file_path_pdf}")
 
                 break
             except HTTPStatusError as e:
@@ -673,19 +697,14 @@ class AIHawkEasyApplier:
             logger.error(f"Cover letter upload failed: {tb_str}")
             raise Exception(f"Upload failed: \nTraceback:\n{tb_str}")
 
-    def _fill_additional_questions(self, job_context: JobContext) -> None:
+    def _fill_additional_questions(self, element: WebElement, job_context: JobContext) -> None:
         logger.debug("Filling additional questions")
-        form_sections = self.driver.find_elements(By.TAG_NAME, 'jobs-easy-apply-modal__content')
-        for section in form_sections:
-            self._process_form_section(job_context, section)
+        self._process_form_section(job_context, element)
 
     def _process_form_section(self, job_context: JobContext, section: WebElement) -> None:
         logger.debug("Processing form section")
         if self._handle_terms_of_service(job_context, section):
             logger.debug("Handled terms of service")
-            return
-        if self._find_and_handle_radio_question(job_context, section):
-            logger.debug("Handled radio question")
             return
         if self._find_and_handle_textbox_question(job_context, section):
             logger.debug("Handled textbox question")
@@ -695,6 +714,9 @@ class AIHawkEasyApplier:
             return
         if self._find_and_handle_dropdown_question(job_context, section):
             logger.debug("Handled dropdown question")
+            return
+        if self._find_and_handle_radio_question(job_context, section):
+            logger.debug("Handled radio question")
             return
 
     def _handle_terms_of_service(self, job_context: JobContext, element: WebElement) -> bool:
@@ -707,34 +729,60 @@ class AIHawkEasyApplier:
         return False
 
     def _find_and_handle_radio_question(self, job_context: JobContext, section: WebElement) -> bool:
-        job_application = job_context.job_application
-        question = section.find_element(By.CLASS_NAME, 'jobs-easy-apply-form-element')
-        radios = question.find_elements(By.CLASS_NAME, 'fb-text-selectable__option')
-        if radios:
-            question_text = section.text.lower()
-            options = [radio.text.lower() for radio in radios]
+        try:
+            # using css selector to find radio buttons
+            radios = section.find_elements(By.CSS_SELECTOR, "input[type='radio']")
+            if not radios:
+                logger.warning("No radio options found in the question.")
+                return False
+            logger.debug(f"Found {len(radios)} radio options: {[radio.text for radio in radios]}")
 
+            question = WebDriverWait(section, 10).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "fb-dash-form-element__label"))
+            )
+            logger.debug(f"Question label found: {question.text}")
+
+            options = []
+            for radio in radios:
+                label = section.find_element(By.CSS_SELECTOR, f"label[for='{radio.get_attribute('id')}']")
+                options.append(label.text.strip().lower())
+
+            logger.debug(f"Found radio options: {options}")
+
+            question_text = section.text.lower()
             existing_answer = None
             current_question_sanitized = self._sanitize_text(question_text)
+
             for item in self.all_data:
                 if current_question_sanitized in item['question'] and item['type'] == 'radio':
                     existing_answer = item
-
                     break
 
             if existing_answer:
                 self._select_radio(radios, existing_answer['answer'])
-                job_application.save_application_data(existing_answer)
+                job_context.job_application.save_application_data(existing_answer)
                 logger.debug("Selected existing radio answer")
                 return True
 
             answer = self.gpt_answerer.answer_question_from_options(question_text, options)
             self._save_questions_to_json({'type': 'radio', 'question': question_text, 'answer': answer})
             self.all_data = self._load_questions_from_json()
-            job_application.save_application_data({'type': 'radio', 'question': question_text, 'answer': answer})
+            job_context.job_application.save_application_data(
+                {'type': 'radio', 'question': question_text, 'answer': answer})
             self._select_radio(radios, answer)
             logger.debug("Selected new radio answer")
             return True
+
+        except TimeoutException as e:
+            logger.error(f"Timeout while locating question label or radio options: {e}")
+            logger.debug(traceback.format_exc())
+        except NoSuchElementException as e:
+            logger.error(f"Failed to find required elements in section: {e}")
+            logger.debug(traceback.format_exc())
+        except Exception as e:
+            logger.error(f"Unexpected error occurred: {e}")
+            logger.debug(traceback.format_exc())
+
         return False
 
     def _find_and_handle_textbox_question(self, job_context: JobContext, section: WebElement) -> bool:
@@ -831,7 +879,7 @@ class AIHawkEasyApplier:
         try:
             question = section.find_element(By.CLASS_NAME, 'fb-dash-form-element__label')
 
-            dropdowns = question.find_elements(By.TAG_NAME, 'select')
+            dropdowns = section.find_elements(By.TAG_NAME, "select")
             if not dropdowns:
                 dropdowns = section.find_elements(By.CSS_SELECTOR, '[data-test-text-entity-list-form-select]')
 
@@ -842,7 +890,7 @@ class AIHawkEasyApplier:
 
                 logger.debug(f"Dropdown options found: {options}")
 
-                question_text = question.find_element(By.TAG_NAME, 'label').text.lower()
+                question_text = question.text.lower()
                 logger.debug(f"Processing dropdown or combobox question: {question_text}")
 
                 current_selection = select.first_selected_option.text
@@ -900,10 +948,23 @@ class AIHawkEasyApplier:
     def _select_radio(self, radios: List[WebElement], answer: str) -> None:
         logger.debug(f"Selecting radio option: {answer}")
         for radio in radios:
-            if answer in radio.text.lower():
-                radio.find_element(By.TAG_NAME, 'label').click()
-                return
-        radios[-1].find_element(By.TAG_NAME, 'label').click()
+            try:
+                radio_id = radio.get_attribute('id')
+                label = radio.find_element(By.XPATH, f"//label[@for='{radio_id}']")
+                if answer in label.text.lower():
+                    label.click()
+                    logger.debug(f"Clicked radio option: {label.text}")
+                    return
+            except Exception as e:
+                logger.warning(f"Failed to process radio option: {radio}. Error: {e}")
+        # If no matching option found, select the last radio option
+        try:
+            last_radio_id = radios[-1].get_attribute('id')
+            last_label = radios[-1].find_element(By.XPATH, f"//label[@for='{last_radio_id}']")
+            last_label.click()
+            logger.debug(f"No matching option found. Selected last radio option: {last_label.text}")
+        except Exception as e:
+            logger.error(f"Failed to select the last radio option. Error: {e}")
 
     def _select_dropdown_option(self, element: WebElement, text: str) -> None:
         logger.debug(f"Selecting dropdown option: {text}")
