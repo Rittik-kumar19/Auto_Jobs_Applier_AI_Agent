@@ -22,10 +22,10 @@ original_stderr = sys.stderr
 # Add the src directory to the Python path
 sys.path.append(str(Path(__file__).resolve().parent / 'src'))
 
-from ai_hawk.authenticator import get_authenticator
-from ai_hawk.bot_facade import AIHawkBotFacade
-from ai_hawk.job_manager import AIHawkJobManager
-from ai_hawk.llm.llm_manager import GPTAnswerer
+from src.ai_hawk.authenticator import get_authenticator
+from src.ai_hawk.bot_facade import AIHawkBotFacade
+from src.ai_hawk.job_manager import AIHawkJobManager
+from src.ai_hawk.llm.llm_manager import GPTAnswerer
 
 
 class ConfigError(Exception):
@@ -142,7 +142,7 @@ class FileManager:
         return (app_data_folder / SECRETS_YAML, app_data_folder / WORK_PREFERENCES_YAML, app_data_folder / PLAIN_TEXT_RESUME_YAML, output_folder)
 
     @staticmethod
-    def file_paths_to_dict(resume_file: Path | None, plain_text_resume_file: Path) -> dict:
+    def file_paths_to_dict(resume_file: None, plain_text_resume_file: Path) -> dict:
         if not plain_text_resume_file.exists():
             raise FileNotFoundError(f"Plain text resume file not found: {plain_text_resume_file}")
 
